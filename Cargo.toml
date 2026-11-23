@@ -1,0 +1,119 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/clipboardx-model",
+    "crates/clipboardx-storage",
+    "crates/clipboardx-core",
+    "crates/clipboardx-platform",
+    "crates/clipboardx-ocr",
+    "crates/clipboardx-updater",
+    "crates/clipboardx-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+authors = ["ClipboardX Contributors"]
+repository = "https://github.com/GXSZone/ClipboardX"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "allow"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+[workspace.dependencies]
+clipboardx-model = { path = "crates/clipboardx-model" }
+clipboardx-storage = { path = "crates/clipboardx-storage" }
+clipboardx-core = { path = "crates/clipboardx-core" }
+clipboardx-platform = { path = "crates/clipboardx-platform" }
+clipboardx-ocr = { path = "crates/clipboardx-ocr" }
+clipboardx-updater = { path = "crates/clipboardx-updater" }
+
+# UI & Rendering
+gpui-kit = { version = "0.10.0", features = ["syntect"] }
+
+# Storage & Crypto
+winresource = "0.1"
+rusqlite = { version = "0.43.0", default-features = false, features = [
+    "cache",
+    "libsqlite3-sys",
+    "in_gecko",
+    "serde_json",
+] }
+sqlite3mc-src = "207.1.0"
+cc = "1"
+chacha20poly1305 = "0.11.0"
+argon2 = "0.6.0"
+hkdf = "0.13.0"
+sha2 = "0.11.1"
+ed25519-dalek = "3.0.0"
+zeroize = { version = "1.9.2", features = ["derive"] }
+rand = "0.10.4"
+hex = "0.4.3"
+image = { version = "0.25.10", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+] }
+
+# Platform Native Bridges
+keyring = "4.2.0"
+clipboard-rs = "0.3.5"
+global-hotkey = "0.10.0"
+tray-icon = "0.26.1"
+enigo = "0.6.1"
+auto-launch = "0.6.0"
+windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Search, Error, Config & i18n
+nucleo-matcher = "0.3.1"
+pinyin = "0.11.0"
+regex = "1"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2.2"
+rust-i18n = "4.2.4"
+
+# On-demand Network & Archive (Plugins / .cbx / Updater)
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "stream",
+    "blocking",
+] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3

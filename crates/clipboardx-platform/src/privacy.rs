@@ -1,0 +1,240 @@
+#![forbid(unsafe_code)]
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use clipboardx_model::AppConfig;
+
+use crate::ffi;
+
+/// Prevents self-capture infinite loops when ClipboardX writes a history item
+/// or autofill credential back to the OS clipboard.
+#[derive(Debug, Clone, Default)]
+pub struct SelfWriteSuppressor {
+    inner: Arc<Mutex<Option<SuppressedEntry>>>,
+}
+
+#[derive(Debug, Clone)]
+struct SuppressedEntry {
+    hash: String,
+    expires_at: Instant,
+}
+
+impl SelfWriteSuppressor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Marks `hash` as originating from ClipboardX for the next `ttl`.
+    pub fn suppress_for(&self, hash: String, ttl: Duration) {
+        if let Ok(mut guard) = self.inner.lock() {
+            *guard = Some(SuppressedEntry {
+                hash,
+                expires_at: Instant::now() + ttl,
+            });
+        }
+    }
+
+    /// Suppresses all incoming clipboard events unconditionally for `ttl` (used during autofill).
+    pub fn suppress_all_for(&self, ttl: Duration) {
+        self.suppress_for("*".to_owned(), ttl);
+    }
+
+    /// Returns `true` if an incoming clipboard event with `hash` should be ignored.
+    pub fn should_ignore(&self, hash: &str) -> bool {
+        let Ok(mut guard) = self.inner.lock() else {
+            return false;
+        };
+        let Some(entry) = guard.as_ref() else {
+            return false;
+        };
+        if Instant::now() > entry.expires_at {
+            *guard = None;
+            return false;
+        }
+        entry.hash == "*" || entry.hash == hash
+    }
+}
+
+/// Runtime privacy and pause gate consulted before persisting any clipboard capture.
+#[derive(Debug, Clone)]
+pub struct CaptureGate {
+    paused_until: Arc<Mutex<Option<PausedState>>>,
+    blacklist: Arc<Mutex<Vec<String>>>,
+    ignore_confidential: Arc<Mutex<bool>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PausedState {
+    Indefinite,
+    Until(Instant),
+}
+
+impl CaptureGate {
+    pub fn from_config(config: &AppConfig) -> Self {
+        Self {
+            paused_until: Arc::new(Mutex::new(None)),
+            blacklist: Arc::new(Mutex::new(config.app_blacklist.clone())),
+            ignore_confidential: Arc::new(Mutex::new(config.ignore_confidential_clipboard)),
+        }
+    }
+
+    pub fn update_from_config(&self, config: &AppConfig) {
+        if let Ok(mut bl) = self.blacklist.lock() {
+            *bl = config.app_blacklist.clone();
+        }
+        if let Ok(mut ic) = self.ignore_confidential.lock() {
+            *ic = config.ignore_confidential_clipboard;
+        }
+    }
+
+    pub fn pause_indefinitely(&self) {
+        if let Ok(mut guard) = self.paused_until.lock() {
+            *guard = Some(PausedState::Indefinite);
+        }
+    }
+
+    pub fn pause_for(&self, duration: Duration) {
+        if let Ok(mut guard) = self.paused_until.lock() {
+            *guard = Some(PausedState::Until(Instant::now() + duration));
+        }
+    }
+
+    pub fn resume(&self) {
+        if let Ok(mut guard) = self.paused_until.lock() {
+            *guard = None;
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        let Ok(mut guard) = self.paused_until.lock() else {
+            return false;
+        };
+        match *guard {
+            None => false,
+            Some(PausedState::Indefinite) => true,
+            Some(PausedState::Until(until)) => {
+                if Instant::now() >= until {
+                    *guard = None;
+                    false
+                } else {
+                    true
+                }
+            }
+        }
+    }
+
+    /// Evaluates whether capture should be skipped due to pause, OS confidentiality,
+    /// or application blacklist rules.
+    pub fn should_skip_capture(
+        &self,
+        source_app_name: Option<&str>,
+        source_app_id: Option<&str>,
+        formats: &[String],
+    ) -> bool {
+        self.should_skip_capture_with_os_marker(
+            source_app_name,
+            source_app_id,
+            formats,
+            ffi::has_confidential_clipboard_marker(),
+        )
+    }
+
+    fn should_skip_capture_with_os_marker(
+        &self,
+        source_app_name: Option<&str>,
+        source_app_id: Option<&str>,
+        formats: &[String],
+        os_confidential: bool,
+    ) -> bool {
+        if self.is_paused() {
+            return true;
+        }
+
+        let check_confidential = self.ignore_confidential.lock().map(|g| *g).unwrap_or(true);
+
+        if check_confidential {
+            if os_confidential {
+                return true;
+            }
+            // Cross-platform format marker check (macOS NSPasteboard / Linux KDE hint).
+            for fmt in formats {
+                let low = fmt.to_ascii_lowercase();
+                if low.contains("concealedtype")
+                    || low.contains("transienttype")
+                    || low.contains("autogeneratedtype")
+                    || low.contains("onepassword")
+                    || low.contains("passwordmanagerhint")
+                    || low.contains("excludeclipboardcontent")
+                {
+                    return true;
+                }
+            }
+        }
+
+        if let Ok(bl) = self.blacklist.lock() {
+            for blocked in bl.iter() {
+                let b_low = blocked.trim().to_ascii_lowercase();
+                if b_low.is_empty() {
+                    continue;
+                }
+                if let Some(name) = source_app_name
+                    && name.to_ascii_lowercase().contains(&b_low)
+                {
+                    return true;
+                }
+                if let Some(id) = source_app_id
+                    && id.to_ascii_lowercase().contains(&b_low)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suppressor_ignores_matching_hash_and_wildcard() {
+        let sup = SelfWriteSuppressor::new();
+        sup.suppress_for("abc123".to_owned(), Duration::from_secs(2));
+        assert!(sup.should_ignore("abc123"));
+        assert!(!sup.should_ignore("other"));
+
+        sup.suppress_all_for(Duration::from_secs(2));
+        assert!(sup.should_ignore("anything"));
+    }
+
+    #[test]
+    fn capture_gate_skips_blacklisted_and_confidential() {
+        let cfg = AppConfig {
+            app_blacklist: vec!["SecretVaultApp".to_owned()],
+            ..Default::default()
+        };
+        let gate = CaptureGate::from_config(&cfg);
+        assert!(gate.should_skip_capture_with_os_marker(Some("SecretVaultApp"), None, &[], false));
+        assert!(gate.should_skip_capture_with_os_marker(
+            Some("Notes"),
+            None,
+            &["org.nspasteboard.ConcealedType".to_owned()],
+            false
+        ));
+        assert!(gate.should_skip_capture_with_os_marker(
+            Some("Editor"),
+            None,
+            &["CF_UNICODETEXT".to_owned()],
+            true
+        ));
+        assert!(!gate.should_skip_capture_with_os_marker(
+            Some("Editor"),
+            None,
+            &["CF_UNICODETEXT".to_owned()],
+            false
+        ));
+    }
+}

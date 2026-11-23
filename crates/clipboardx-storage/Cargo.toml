@@ -1,0 +1,29 @@
+[package]
+name = "clipboardx-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clipboardx-model.workspace = true
+rusqlite.workspace = true
+chacha20poly1305.workspace = true
+argon2.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+rand.workspace = true
+hex.workspace = true
+image.workspace = true
+keyring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+sqlite3mc-src.workspace = true

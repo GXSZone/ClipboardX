@@ -1,0 +1,27 @@
+[package]
+name = "clipboardx-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clipboardx-model.workspace = true
+clipboardx-core.workspace = true
+clipboardx-storage.workspace = true
+clipboardx-platform.workspace = true
+clipboardx-ocr.workspace = true
+clipboardx-updater.workspace = true
+gpui-kit.workspace = true
+rust-i18n.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource.workspace = true
+image.workspace = true

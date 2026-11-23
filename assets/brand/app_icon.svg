@@ -1,0 +1,43 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="16" y1="8" x2="112" y2="124" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="48%" stop-color="#172554"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <radialGradient id="topGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(42 22) rotate(52) scale(86)">
+      <stop offset="0%" stop-color="#60A5FA" stop-opacity="0.34"/>
+      <stop offset="58%" stop-color="#3B82F6" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="backCard" x1="36" y1="30" x2="98" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#93C5FD" stop-opacity="0.36"/>
+      <stop offset="100%" stop-color="#3B82F6" stop-opacity="0.14"/>
+    </linearGradient>
+    <linearGradient id="frontCard" x1="32" y1="28" x2="90" y2="102" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.98"/>
+      <stop offset="100%" stop-color="#DCEBFF" stop-opacity="0.92"/>
+    </linearGradient>
+    <linearGradient id="clipBar" x1="48" y1="20" x2="80" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60A5FA"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="xMain" x1="46" y1="51" x2="78" y2="83" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1D4ED8"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="xAccent" x1="78" y1="51" x2="46" y2="83" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="29" fill="url(#bgGrad)"/>
+  <rect width="128" height="128" rx="29" fill="url(#topGlow)"/>
+  <rect x="40" y="34" width="58" height="72" rx="14" transform="rotate(6 69 70)" fill="url(#backCard)"/>
+  <rect x="31" y="29" width="60" height="74" rx="14" fill="url(#frontCard)"/>
+  <rect x="46" y="21" width="30" height="14" rx="7" fill="url(#clipBar)"/>
+  <rect x="55" y="26" width="12" height="4" rx="2" fill="#E0F2FE" fill-opacity="0.9"/>
+  <path d="M48 53.5L74 79.5" stroke="url(#xMain)" stroke-width="8.5" stroke-linecap="round"/>
+  <path d="M74 53.5L48 79.5" stroke="url(#xAccent)" stroke-width="8.5" stroke-linecap="round"/>
+  <circle cx="61" cy="66.5" r="3.6" fill="#FFFFFF" fill-opacity="0.22"/>
+</svg>

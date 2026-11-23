@@ -1,0 +1,234 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            bin: clipboardx-app.exe
+          - os: macos-15
+            target: macos-aarch64
+            bin: clipboardx-app
+          - os: ubuntu-latest
+            target: linux-x86_64
+            bin: clipboardx-app
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libgtk-3-dev libayatana-appindicator3-dev \
+            libxtst-dev libxdo-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release -p clipboardx-app
+
+      - name: Package Windows Portable ZIP & NSIS Setup Installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/${{ matrix.bin }} dist/ClipboardX.exe
+          Compress-Archive -Path dist/ClipboardX.exe -DestinationPath dist/clipboardx-windows-x86_64-portable.zip
+          Remove-Item dist/ClipboardX.exe
+
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $nsi = @"
+          Unicode True
+          !include "MUI2.nsh"
+
+          Name "ClipboardX"
+          OutFile "dist\clipboardx-windows-x86_64-setup.exe"
+          InstallDir "`$LOCALAPPDATA\Programs\ClipboardX"
+          InstallDirRegKey HKCU "Software\ClipboardX" "InstallDir"
+          RequestExecutionLevel user
+          SetCompressor /SOLID lzma
+
+          !define MUI_ICON "assets\brand\clipboardx.ico"
+          !define MUI_UNICON "assets\brand\clipboardx.ico"
+          !define MUI_ABORTWARNING
+          !define MUI_FINISHPAGE_RUN "`$INSTDIR\ClipboardX.exe"
+
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
+
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
+
+          !insertmacro MUI_LANGUAGE "SimpChinese"
+          !insertmacro MUI_LANGUAGE "English"
+
+          Section "ClipboardX" SecMain
+            SetOutPath "`$INSTDIR"
+            File "/oname=ClipboardX.exe" "target\release\${{ matrix.bin }}"
+            File "assets\brand\clipboardx.ico"
+
+            WriteRegStr HKCU "Software\ClipboardX" "InstallDir" "`$INSTDIR"
+            WriteUninstaller "`$INSTDIR\Uninstall.exe"
+
+            CreateDirectory "`$SMPROGRAMS\ClipboardX"
+            CreateShortCut "`$SMPROGRAMS\ClipboardX\ClipboardX.lnk" "`$INSTDIR\ClipboardX.exe" "" "`$INSTDIR\ClipboardX.exe" 0
+            CreateShortCut "`$DESKTOP\ClipboardX.lnk" "`$INSTDIR\ClipboardX.exe" "" "`$INSTDIR\ClipboardX.exe" 0
+
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "DisplayName" "ClipboardX"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "DisplayVersion" "$ver"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "Publisher" "ClipboardX Contributors"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "DisplayIcon" "`$INSTDIR\ClipboardX.exe,0"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "InstallLocation" "`$INSTDIR"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "UninstallString" '"`$INSTDIR\Uninstall.exe"'
+            WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "NoModify" 1
+            WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX" "NoRepair" 1
+          SectionEnd
+
+          Section "Uninstall"
+            Delete "`$INSTDIR\ClipboardX.exe"
+            Delete "`$INSTDIR\clipboardx.ico"
+            Delete "`$INSTDIR\Uninstall.exe"
+            RMDir "`$INSTDIR"
+
+            Delete "`$SMPROGRAMS\ClipboardX\ClipboardX.lnk"
+            RMDir "`$SMPROGRAMS\ClipboardX"
+            Delete "`$DESKTOP\ClipboardX.lnk"
+
+            DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardX"
+            DeleteRegKey HKCU "Software\ClipboardX"
+          SectionEnd
+          "@
+          Set-Content -Path installer.nsi -Value $nsi -Encoding utf8BOM
+          $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+          if (-not $makensis) {
+            foreach ($cand in @("C:\Program Files (x86)\NSIS\makensis.exe", "C:\Program Files\NSIS\makensis.exe")) {
+              if (Test-Path $cand) { $makensis = $cand; break }
+            }
+          }
+          if (-not $makensis) {
+            choco install nsis -y --no-progress | Out-Host
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          }
+          & $makensis /V2 installer.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package macOS App Bundle (with .icns) & DMG
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist ClipboardX.app/Contents/MacOS ClipboardX.app/Contents/Resources ClipboardX.iconset
+          cp target/release/${{ matrix.bin }} ClipboardX.app/Contents/MacOS/ClipboardX
+          chmod +x ClipboardX.app/Contents/MacOS/ClipboardX
+
+          qlmanage -t -s 1024 -o . assets/brand/app_icon.svg || sips -s format png assets/brand/app_icon.svg --out app_icon.svg.png
+          BASE_PNG="app_icon.svg.png"
+          for sz in 16 32 128 256 512; do
+            sips -z $sz $sz "$BASE_PNG" --out "ClipboardX.iconset/icon_${sz}x${sz}.png"
+            sz2=$((sz * 2))
+            sips -z $sz2 $sz2 "$BASE_PNG" --out "ClipboardX.iconset/icon_${sz}x${sz}@2x.png"
+          done
+          iconutil -c icns ClipboardX.iconset -o ClipboardX.app/Contents/Resources/AppIcon.icns
+
+          cat <<'EOF' > ClipboardX.app/Contents/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>ClipboardX</string>
+            <key>CFBundleDisplayName</key>
+            <string>ClipboardX</string>
+            <key>CFBundleIdentifier</key>
+            <string>dev.clipboardx.app</string>
+            <key>CFBundleVersion</key>
+            <string>${{ github.ref_name }}</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${{ github.ref_name }}</string>
+            <key>CFBundleExecutable</key>
+            <string>ClipboardX</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSUIElement</key>
+            <true/>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+          ditto -c -k --sequesterRsrc --keepParent ClipboardX.app dist/clipboardx-macos-aarch64.zip
+          mkdir -p dmg_root
+          cp -R ClipboardX.app dmg_root/
+          ln -s /Applications dmg_root/Applications
+          hdiutil create -volname "ClipboardX" -srcfolder dmg_root -ov -format UDZO dist/clipboardx-macos-aarch64.dmg
+
+      - name: Package Linux Tarball & AppImage
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist AppDir/usr/bin AppDir/usr/share/icons/hicolor/scalable/apps
+          tar -C target/release -czf dist/clipboardx-linux-x86_64.tar.gz ${{ matrix.bin }}
+          cp target/release/${{ matrix.bin }} AppDir/usr/bin/clipboardx-app
+          chmod +x AppDir/usr/bin/clipboardx-app
+          cp assets/brand/app_icon.svg AppDir/clipboardx.svg
+          cp assets/brand/app_icon.svg AppDir/usr/share/icons/hicolor/scalable/apps/clipboardx.svg
+          cat <<'EOF' > AppDir/clipboardx.desktop
+          [Desktop Entry]
+          Name=ClipboardX
+          Exec=clipboardx-app
+          Icon=clipboardx
+          Type=Application
+          Categories=Utility;
+          EOF
+          cat <<'EOF' > AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/clipboardx-app" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          curl -f -L -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir dist/clipboardx-linux-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: artifacts/*

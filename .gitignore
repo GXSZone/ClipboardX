@@ -1,0 +1,54 @@
+# Rust & Cargo
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Build & packaging artifacts
+/dist/
+/out/
+*.exe
+*.msi
+*.dmg
+*.app
+*.AppImage
+*.deb
+*.rpm
+
+# ClipboardX local runtime data, keys & logs (NEVER commit user secrets or local DBs)
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.enc
+*.cbx
+*.key
+*.pem
+/data/
+/plugins/
+/logs/
+*.log
+
+# Environment & local overrides
+.env
+.env.*
+!.env.example
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editors & IDEs
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~

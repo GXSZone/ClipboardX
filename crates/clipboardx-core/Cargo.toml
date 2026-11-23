@@ -1,0 +1,27 @@
+[package]
+name = "clipboardx-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clipboardx-model.workspace = true
+clipboardx-storage.workspace = true
+nucleo-matcher.workspace = true
+pinyin.workspace = true
+regex.workspace = true
+sha2.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+zip.workspace = true
+chacha20poly1305.workspace = true
+argon2.workspace = true
+rand.workspace = true
+zeroize.workspace = true
