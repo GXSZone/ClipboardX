@@ -26,7 +26,7 @@ pub use ffi::{
     move_own_window_visual_to, own_window_visual_origin, own_window_visual_rect,
     place_own_window_at_capsule_anchor, position_hover_preview_popup, remember_own_window_hwnd,
     reset_hover_preview_popup_hwnd, resize_own_window_clamped, set_own_window_topmost,
-    snap_or_read_capsule_anchor,
+    snap_or_read_capsule_anchor, trim_process_working_set,
 };
 pub use hotkey::{HotkeyService, HotkeyTriggerStateMachine, parse_hotkey};
 pub use privacy::{CaptureGate, SelfWriteSuppressor};

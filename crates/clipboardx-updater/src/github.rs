@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use clipboardx_model::{UpdateChannel, UpdateClient, UpdateReleaseInfo, UpdaterError};
-use reqwest::blocking::Client;
 use serde::Deserialize;
 
+use crate::http::{format_reqwest_error, send_get_with_fallback};
 use crate::manifest::{
     DEFAULT_RELEASE_PUBLIC_KEY_HEX, RELEASE_MANIFEST_ASSET_NAME, SignedUpdateManifest,
     canonical_asset_signing_bytes, current_platform_key, is_newer_semver, verify_ed25519_hex,
@@ -11,6 +11,9 @@ use crate::manifest::{
 
 const DEFAULT_GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/GXSZone/ClipboardX/releases";
+const DEFAULT_GITHUB_LATEST_WEB_URL: &str = "https://github.com/GXSZone/ClipboardX/releases/latest";
+const DEFAULT_GITHUB_DOWNLOAD_BASE_URL: &str =
+    "https://github.com/GXSZone/ClipboardX/releases/download";
 
 #[derive(Debug, Deserialize)]
 struct GitHubReleaseDto {
@@ -117,32 +120,27 @@ impl GitHubUpdateClient {
     }
 }
 
-impl UpdateClient for GitHubUpdateClient {
-    fn check_latest(
+impl GitHubUpdateClient {
+    fn check_latest_via_api(
         &self,
         channel: UpdateChannel,
+        user_agent: &str,
     ) -> Result<Option<UpdateReleaseInfo>, UpdaterError> {
-        if !self.releases_api_url.starts_with("https://") {
-            return Err(UpdaterError::Network(
-                "update endpoint must use HTTPS".to_owned(),
-            ));
-        }
+        let timeout = Duration::from_secs(12);
+        let api_url = if self.releases_api_url == DEFAULT_GITHUB_RELEASES_URL {
+            format!("{DEFAULT_GITHUB_RELEASES_URL}?per_page=10")
+        } else {
+            self.releases_api_url.clone()
+        };
 
-        let http = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .user_agent(format!("ClipboardX/{}", self.current_version))
-            .build()
-            .map_err(|err| UpdaterError::Network(err.to_string()))?;
-
-        let releases: Vec<GitHubReleaseDto> = http
-            .get(&self.releases_api_url)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .map_err(|err| UpdaterError::Network(err.to_string()))?
-            .error_for_status()
-            .map_err(|err| UpdaterError::Network(err.to_string()))?
-            .json()
-            .map_err(|err| UpdaterError::Network(err.to_string()))?;
+        let releases: Vec<GitHubReleaseDto> = send_get_with_fallback(
+            timeout,
+            user_agent,
+            &api_url,
+            Some("application/vnd.github+json"),
+        )?
+        .json()
+        .map_err(|err| UpdaterError::Network(format_reqwest_error(&err)))?;
 
         for rel in releases {
             if rel.draft {
@@ -164,14 +162,14 @@ impl UpdateClient for GitHubUpdateClient {
             if !manifest_asset.browser_download_url.starts_with("https://") {
                 continue;
             }
-            let manifest_json = http
-                .get(&manifest_asset.browser_download_url)
-                .send()
-                .map_err(|err| UpdaterError::Network(err.to_string()))?
-                .error_for_status()
-                .map_err(|err| UpdaterError::Network(err.to_string()))?
-                .text()
-                .map_err(|err| UpdaterError::Network(err.to_string()))?;
+            let manifest_json = send_get_with_fallback(
+                timeout,
+                user_agent,
+                &manifest_asset.browser_download_url,
+                None,
+            )?
+            .text()
+            .map_err(|err| UpdaterError::Network(format_reqwest_error(&err)))?;
 
             if let Some(verified) = self.evaluate_manifest_json(&manifest_json, channel)? {
                 return Ok(Some(verified));
@@ -179,6 +177,82 @@ impl UpdateClient for GitHubUpdateClient {
         }
 
         Ok(None)
+    }
+
+    /// Fallback for unauthenticated API rate limits (HTTP 403/429) or blocked `api.github.com` paths:
+    /// follows `github.com/.../releases/latest` redirect to discover the newest tag, then fetches and
+    /// verifies `clipboardx-manifest.json` directly with Ed25519 + SHA-256.
+    fn check_latest_via_web_redirect(
+        &self,
+        channel: UpdateChannel,
+        user_agent: &str,
+    ) -> Result<Option<UpdateReleaseInfo>, UpdaterError> {
+        let timeout = Duration::from_secs(12);
+        let resp = send_get_with_fallback(
+            timeout,
+            user_agent,
+            DEFAULT_GITHUB_LATEST_WEB_URL,
+            Some("text/html"),
+        )?;
+        let final_url = resp.url().as_str().to_owned();
+        let Some(tag_name) = extract_release_tag_from_url(&final_url) else {
+            return Ok(None);
+        };
+        if !is_newer_semver(&self.current_version, &tag_name) {
+            return Ok(None);
+        }
+
+        let manifest_url =
+            format!("{DEFAULT_GITHUB_DOWNLOAD_BASE_URL}/{tag_name}/{RELEASE_MANIFEST_ASSET_NAME}");
+        let manifest_resp = match send_get_with_fallback(timeout, user_agent, &manifest_url, None) {
+            Ok(r) => r,
+            Err(UpdaterError::Network(msg)) if msg == "HTTP 404" => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let manifest_json = manifest_resp
+            .text()
+            .map_err(|err| UpdaterError::Network(format_reqwest_error(&err)))?;
+
+        self.evaluate_manifest_json(&manifest_json, channel)
+    }
+}
+
+fn extract_release_tag_from_url(url: &str) -> Option<String> {
+    let (_, tag) = url.trim().rsplit_once("/releases/tag/")?;
+    let clean = tag.split(['?', '#']).next()?.trim().trim_end_matches('/');
+    if clean.is_empty() {
+        None
+    } else {
+        Some(clean.to_owned())
+    }
+}
+
+impl UpdateClient for GitHubUpdateClient {
+    fn check_latest(
+        &self,
+        channel: UpdateChannel,
+    ) -> Result<Option<UpdateReleaseInfo>, UpdaterError> {
+        if !self.releases_api_url.starts_with("https://") {
+            return Err(UpdaterError::Network(
+                "update endpoint must use HTTPS".to_owned(),
+            ));
+        }
+
+        let user_agent = format!("ClipboardX/{}", self.current_version);
+        match self.check_latest_via_api(channel, &user_agent) {
+            Ok(res) => Ok(res),
+            Err(api_err) if self.releases_api_url == DEFAULT_GITHUB_RELEASES_URL => {
+                tracing::warn!(error = %api_err, "GitHub API update check failed; trying web redirect fallback");
+                match self.check_latest_via_web_redirect(channel, &user_agent) {
+                    Ok(res) => Ok(res),
+                    Err(web_err) => {
+                        tracing::warn!(error = %web_err, "GitHub web update fallback failed");
+                        Err(api_err)
+                    }
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -243,5 +317,25 @@ mod tests {
             .ok()
             .flatten();
         assert_eq!(found.as_ref().map(|r| r.version.as_str()), Some("0.2.0"));
+    }
+
+    #[test]
+    fn extracts_release_tag_from_redirect_url() {
+        assert_eq!(
+            extract_release_tag_from_url(
+                "https://github.com/GXSZone/ClipboardX/releases/tag/v0.2.0"
+            ),
+            Some("v0.2.0".to_owned())
+        );
+        assert_eq!(
+            extract_release_tag_from_url(
+                "https://github.com/GXSZone/ClipboardX/releases/tag/v0.2.0/?foo=1"
+            ),
+            Some("v0.2.0".to_owned())
+        );
+        assert_eq!(
+            extract_release_tag_from_url("https://github.com/GXSZone/ClipboardX/releases"),
+            None
+        );
     }
 }

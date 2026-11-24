@@ -5,6 +5,7 @@
 //! and atomic cross-platform executable replacement with rollback protection.
 
 pub mod github;
+mod http;
 pub mod installer;
 pub mod manifest;
 

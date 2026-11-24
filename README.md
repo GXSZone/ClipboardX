@@ -1,12 +1,10 @@
 <div align="center">
 
-<img src="assets/brand/app_icon.svg" width="96" height="96" alt="ClipboardX Logo" />
+<img src="assets/brand/app_icon.svg" width="88" height="88" alt="ClipboardX Logo" />
 
 # ClipboardX
 
-**Offline-first, cross-platform clipboard manager & encrypted credential vault built with Rust + GPUI.**
-
-English | [简体中文](README.zh-CN.md)
+[English](README.md) · [简体中文](README.zh-CN.md)
 
 [![Release](https://img.shields.io/github/v/release/GXSZone/ClipboardX?style=flat-square&color=3B82F6)](https://github.com/GXSZone/ClipboardX/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=flat-square)](LICENSE-MIT)
@@ -23,60 +21,43 @@ English | [简体中文](README.zh-CN.md)
 
 ---
 
-## Designed for Effortless Daily Flow
+## Visual Showcase
 
-### 1. Floating Panel ↔ Liquid Frosted Dock Capsule
-- **Auto-Collapse on Blur**: When you switch back to your editor or browser, the floating panel doesn't abruptly vanish—by default it glides into a `38×58` **liquid frosted glass capsule** docked cleanly to your screen edge (or optionally auto-hides to the system tray).
-- **Subtle Capture Pulse**: Every time you press `Ctrl/Cmd + C` in the background, the edge capsule emits a soft luminous pulse to confirm your clip is encrypted and saved without interrupting your focus.
-- **Hover Preheat & Blind-Drag Snapping**: Hover to glow and pop the panel right back open, or grab and drag the capsule vertically along the screen edge to park it anywhere out of your way.
-- **`180ms` Adaptive Dual / Slim Morph**: Tap `Ctrl + \` to smoothly morph between the `680×420` dual-pane preview and the `328×420` compact single-pane list—with automatic state memory.
+| Dual-Pane Main Panel (Light) | Liquid Frosted Dock Capsule |
+| :---: | :---: |
+| ![Dual-Pane Main Panel](assets/screenshots/en-light-dual.png) | ![Liquid Frosted Dock Capsule](assets/screenshots/en-light-capsule.png) |
 
-### 2. Smart Hybrid Hotkey & Zero-Friction Direct Paste
-- **Tap to Toggle · Hold to Peek (Smart Hybrid, Default)**:
-  - **Tap `< 260ms`**: Press `Alt + V` (`Cmd + Shift + V` on macOS) to keep the panel open while browsing, organizing groups, or inspecting images/OCR.
-  - **Hold `≥ 260ms`**: Hold the hotkey to peek, pick an item, and release to paste & dismiss in one fluid gesture (pure Toggle and pure Hold-to-Peek modes are also available).
-- **One-Click Direct Paste**: Hover to inspect rich previews (code, JSON, JWT, WCAG color swatches, cleaned URLs, images & OCR), then **single-click or press `Enter`** to restore focus to your previous app and paste instantly—no more copy → switch window → `Ctrl + V`.
-- **Instant Top-9 Paste**: Press `Ctrl + 1` through `Ctrl + 9` right after summoning to direct-paste any of your latest 9 clips without touching the mouse.
+| Instant Search & Smart Color Preview | Image Preview & Offline Native OCR |
+| :---: | :---: |
+| ![Instant Search and Smart Color Preview](assets/screenshots/en-light-search-color.png) | ![Image Preview and Offline OCR](assets/screenshots/en-light-ocr.png) |
 
-### 3. Sub-Millisecond Multi-Dimensional Search
-- **All-in-One Search Bar**: Combines SQLite FTS5 full-text search, Chinese Pinyin (initials & full), fuzzy matching, regex (`/pattern/`), and structured prefix filters (`type:color`, `type:image`, `type:code`, `app:chrome`).
-- **Searchable Screenshots via Offline OCR**: Native OS OCR (WinRT / Vision) and optional offline plugins automatically index text inside screenshots directly into your encrypted local database.
+| Encrypted Vault & Real-World Low RAM | Night Mode Theme Included |
+| :---: | :---: |
+| ![Encrypted Vault and Low RAM](assets/screenshots/en-light-vault-ram.png) | ![Night Mode Theme](assets/screenshots/en-night-theme.png) |
 
-### 4. Encrypted Account Vault & Clipboard-Safe Auto-Fill
-- **Dual-Database Local Encryption**: Regular history (`history.db`) and credentials (`vault.db`) live in separate **SQLCipher** databases backed by OS keyring envelope keys and `XChaCha20-Poly1305` CAS blobs—100% offline with zero telemetry.
-- **One-Click Sequential Auto-Fill**: Press `Enter` on any vault credential to auto-type `User → Tab → Password → Enter`, then automatically wipe temporary secrets and **restore your original clipboard**.
-- **Proactive Privacy Gate**: Respects OS confidential clipboard flags, ignores major password managers out of the box (`1Password`, `Bitwarden`, `KeePassXC`, `Enpass`, `Keychain Access`), and lets you pause capture anytime with `Ctrl + Alt + P`.
+---
+
+## Core Features
+
+- **Native Rust + GPUI Low Memory Footprint**: Pure native GPU-accelerated rendering with measured Private Working Set around **2.2 MB** in standby capsule mode and **< 20 MB** peak across active multi-window interactions.
+- **Floating Panel ↔ Liquid Frosted Capsule**: Automatically glides into a `38×58` edge-docked glass capsule on blur, pulses softly on every new copy, pops back on hover, and supports edge-snapping drag; press `Ctrl + \` for `180ms` dual (`680×420`) ↔ compact (`328×420`) morphing across Light and Night borderless themes.
+- **Smart Hybrid Hotkey & Direct Paste**: `Alt + V` (`Cmd + Shift + V` on macOS) taps to toggle and holds to peek; click or press `Enter` to paste straight into your previous window, or hit `Ctrl + 1~9` for instant top-9 paste.
+- **Sub-Millisecond Search & Smart Previews**: Combines FTS5 full-text, Chinese Pinyin, fuzzy, regex (`/pattern/`), and prefix filters (`type:image`, `app:chrome`); renders dedicated previews for code, JSON, JWT, colors (WCAG / OKLCH), cleaned URLs, and offline native OCR.
+- **Dual-DB Encryption & Account Vault**: Isolated `history.db` and `vault.db` secured with SQLCipher, OS keyring envelope keys, and `XChaCha20-Poly1305` blobs; supports `User → Tab → Pass → Enter` sequential auto-fill with automatic clipboard restoration, password-manager blacklisting, and 100% offline zero-telemetry operation.
 
 ---
 
 ## Keyboard Shortcuts
 
-| Shortcut | Scope | Action |
-| :--- | :--- | :--- |
-| `Alt + V` (`Cmd + Shift + V` on macOS) | Global | Smart Hybrid summon / hide (tap to toggle, hold to peek) |
-| `Ctrl + \` | Global / Panel | `180ms` morph between `680×420` dual-pane and `328×420` compact view |
-| `Ctrl + Alt + P` | Global | Pause / resume clipboard monitoring on the fly |
-| `Enter` / Left-Click | Panel | Direct paste into previous window (**Auto-Fill** in Account Vault) |
-| `Shift + Enter` | Panel | Paste as plain text (or fill password only in Account Vault) |
-| `Ctrl + 1` – `Ctrl + 9` | Panel | Direct-paste item #1 – #9 immediately |
-| `↑` / `↓` | Panel | Navigate history list with live right-pane preview |
-| `Esc` | Panel | Clear search query first, press again to collapse back to capsule/tray |
-
----
-
-## Visual Showcase
-
-| Dual-Pane Main Panel (Night) | Liquid Frosted Dock Capsule |
-| :---: | :---: |
-| ![Dual-Pane Main Panel](assets/screenshots/en-dual-night.png) | ![Liquid Frosted Dock Capsule](assets/screenshots/en-capsule-night.png) |
-
-| Seamless Night & Light Themes | Instant Search & Smart Color Preview |
-| :---: | :---: |
-| ![Seamless Night and Light Themes](assets/screenshots/en-theme-wipe.png) | ![Instant Search and Smart Color Preview](assets/screenshots/en-search-color.png) |
-
-| Image Preview & Offline Native OCR | Encrypted Account Vault & Auto-Fill |
-| :---: | :---: |
-| ![Image Preview and Offline OCR](assets/screenshots/en-ocr-light.png) | ![Encrypted Account Vault and Auto-Fill](assets/screenshots/en-vault-night.png) |
+| Shortcut | Action |
+| :--- | :--- |
+| `Alt + V` (`Cmd + Shift + V` on macOS) | Smart Hybrid summon / hide (tap to toggle, hold to peek) |
+| `Ctrl + \` | `180ms` morph between `680×420` dual-pane and `328×420` compact view |
+| `Ctrl + Alt + P` | Pause / resume clipboard monitoring |
+| `Enter` / Left-Click | Direct paste into previous window (**Auto-Fill** in Vault) |
+| `Shift + Enter` | Paste plain text (or password only in Vault) |
+| `Ctrl + 1` – `Ctrl + 9` | Direct-paste item #1 – #9 immediately |
+| `Esc` | Clear search query, press again to collapse to capsule/tray |
 
 ---
 
@@ -94,8 +75,6 @@ Pre-built binaries are available on [GitHub Releases](https://github.com/GXSZone
 
 ## Architecture
 
-ClipboardX follows a strict acyclic hexagonal workspace layout:
-
 | Crate | Responsibility |
 | :--- | :--- |
 | `clipboardx-model` | Single source of truth for domain models, themes, layouts, shortcuts, config schema, and port traits |
@@ -109,13 +88,6 @@ ClipboardX follows a strict acyclic hexagonal workspace layout:
 ---
 
 ## Build & Run
-
-### Prerequisites
-
-- **Rust** `1.89+` (Edition 2024)
-- Platform build tools (Windows MSVC Build Tools / macOS Xcode Command Line Tools / Linux GTK & X11/Wayland dev libraries)
-
-### Commands
 
 ```bash
 # Run the desktop application

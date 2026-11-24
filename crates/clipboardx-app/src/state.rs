@@ -90,7 +90,7 @@ impl StorageBreakdown {
     }
 }
 
-const MAX_SHARED_IMAGE_CACHE: usize = 64;
+const MAX_SHARED_IMAGE_CACHE: usize = 10;
 
 /// Cached GPUI image handle plus original pixel dimensions shared across the list thumbnails,
 /// right preview pane, capsule quick-paste card, and immersive hover preview popup so GPUI's
@@ -297,6 +297,20 @@ impl AppRuntime {
     /// Returns an already warmed image thumbnail from the shared UI-thread cache.
     pub fn cached_image_thumb(&self, id: ClipItemId) -> Option<CachedImageThumb> {
         self.image_cache.borrow().get(&id).cloned()
+    }
+
+    /// Evicts all cached thumbnail handles during idle standby and shrinks backing storage.
+    pub fn drain_image_cache(&self) -> Vec<Arc<Image>> {
+        let mut cache = self.image_cache.borrow_mut();
+        let drained = cache.drain().map(|(_, entry)| entry.image).collect();
+        cache.shrink_to_fit();
+        drained
+    }
+
+    /// Asks both encrypted SQLite stores to release non-essential page cache memory.
+    pub fn reclaim_storage_memory(&self) {
+        self.service.store().shrink_memory();
+        self.vault.shrink_memory();
     }
 
     /// Loads and caches an image clip's thumbnail/blob handle from a summary row so list icons,
@@ -892,21 +906,24 @@ fn spawn_startup_update_check(
     thread::Builder::new()
         .name("clipboardx-startup-update".to_owned())
         .spawn(move || {
-            thread::sleep(Duration::from_secs(4));
-            let client = GitHubUpdateClient::new(env!("CARGO_PKG_VERSION"));
-            match client.check_latest(channel) {
-                Ok(Some(info)) => {
-                    if let Ok(mut s) = status_arc.lock() {
-                        *s = UpdateStatus::Available(info);
+            thread::sleep(Duration::from_secs(12));
+            {
+                let client = GitHubUpdateClient::new(env!("CARGO_PKG_VERSION"));
+                match client.check_latest(channel) {
+                    Ok(Some(info)) => {
+                        if let Ok(mut s) = status_arc.lock() {
+                            *s = UpdateStatus::Available(info);
+                        }
+                        let _ = ui_tx.send(UiEvent::UpdateStateChanged);
                     }
-                    let _ = ui_tx.send(UiEvent::UpdateStateChanged);
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    // Offline or rate-limited checks remain quiet during startup.
-                    tracing::debug!(error = %err, "background update check skipped");
+                    Ok(None) => {}
+                    Err(err) => {
+                        // Offline or rate-limited checks remain quiet during startup.
+                        tracing::debug!(error = %err, "background update check skipped");
+                    }
                 }
             }
+            clipboardx_platform::trim_process_working_set();
         })
         .ok();
 }
@@ -922,37 +939,80 @@ fn spawn_background_ocr_worker(
         .name("clipboardx-ocr-worker".to_owned())
         .spawn(move || {
             while let Ok(item_id) = ocr_rx.recv() {
-                let Ok(ClipboardPayload::Image { png_bytes, .. }) =
-                    service.load_payload_for_paste(item_id, false)
-                else {
-                    continue;
-                };
+                {
+                    let Ok(ClipboardPayload::Image { png_bytes, .. }) =
+                        service.load_payload_for_paste(item_id, false)
+                    else {
+                        continue;
+                    };
 
-                let active_plugin = config
-                    .lock()
-                    .ok()
-                    .and_then(|c| c.active_ocr_plugin.clone());
-                let provider = resolve_active_provider(active_plugin.as_deref(), &plugins_dir);
-                if !provider.is_available() {
-                    continue;
-                }
+                    let active_plugin =
+                        config.lock().ok().and_then(|c| c.active_ocr_plugin.clone());
+                    let recognized = if active_plugin.is_none() && cfg!(target_os = "windows") {
+                        run_isolated_native_ocr(&png_bytes)
+                    } else {
+                        let provider =
+                            resolve_active_provider(active_plugin.as_deref(), &plugins_dir);
+                        if provider.is_available() {
+                            provider
+                                .recognize_png(&png_bytes, None)
+                                .ok()
+                                .map(|out| out.full_text)
+                        } else {
+                            None
+                        }
+                    };
 
-                match provider.recognize_png(&png_bytes, None) {
-                    Ok(output) if !output.full_text.trim().is_empty() => {
-                        if let Err(err) = service.update_ocr_text(item_id, &output.full_text) {
+                    if let Some(full_text) = recognized
+                        && !full_text.trim().is_empty()
+                    {
+                        if let Err(err) = service.update_ocr_text(item_id, &full_text) {
                             tracing::warn!(error = %err, "failed to store OCR text");
                         } else {
                             let _ = ui_tx.send(UiEvent::HistoryUpdated);
                         }
                     }
-                    Ok(_) => {}
-                    Err(err) => {
-                        tracing::debug!(error = %err, provider = provider.id(), "OCR recognition skipped");
-                    }
                 }
+                clipboardx_platform::trim_process_working_set();
             }
         })
         .ok();
+}
+
+/// Executes native Windows WinRT OCR inside a short-lived `--native-ocr-worker` child
+/// process so Windows.Media.Ocr language models and COM heaps never remain resident in
+/// the main ClipboardX UI process.
+fn run_isolated_native_ocr(png_bytes: &[u8]) -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let exe = std::env::current_exe().ok()?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("--native-ocr-worker")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd.spawn().ok()?;
+    if let Some(mut stdin) = child.stdin.take()
+        && stdin.write_all(png_bytes).is_err()
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    }
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn ensure_runtime_dirs(paths: &AppPaths) -> Result<(), ClipboardXError> {

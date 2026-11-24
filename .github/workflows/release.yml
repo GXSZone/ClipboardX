@@ -216,6 +216,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -225,6 +227,25 @@ jobs:
         run: |
           cd artifacts
           sha256sum * > SHA256SUMS.txt
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Sign release update manifest
+        env:
+          CLIPBOARDX_RELEASE_SIGNING_KEY: ${{ secrets.CLIPBOARDX_RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "${CLIPBOARDX_RELEASE_SIGNING_KEY:-}" ]; then
+            echo "CLIPBOARDX_RELEASE_SIGNING_KEY secret is not configured; skipping signed manifest."
+            exit 0
+          fi
+          PUBLISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          cargo run --release -p clipboardx-updater --example sign_manifest -- \
+            "${{ github.ref_name }}" \
+            "${{ github.repository }}" \
+            "artifacts" \
+            "$PUBLISHED_AT" \
+            "ClipboardX ${{ github.ref_name }} release"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

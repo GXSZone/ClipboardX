@@ -446,6 +446,14 @@ pub fn is_accessibility_trusted() -> bool {
     }
 }
 
+/// Hints the OS to trim idle working-set pages while the app rests in capsule or tray standby.
+pub fn trim_process_working_set() {
+    #[cfg(target_os = "windows")]
+    {
+        windows_impl::trim_process_working_set();
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos_impl {
     #![allow(unsafe_code)]
@@ -483,8 +491,11 @@ mod windows_impl {
         IsClipboardFormatAvailable, RegisterClipboardFormatW,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Memory::{
+        SETPROCESSWORKINGSETSIZEEX_FLAGS, SetProcessWorkingSetSizeEx,
+    };
     use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        GetCurrentProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
         QueryFullProcessImageNameW,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -1634,6 +1645,20 @@ mod windows_impl {
 
     pub fn begin_window_drag() {
         post_nc_lbutton_down(HTCAPTION);
+    }
+
+    pub fn trim_process_working_set() {
+        // SAFETY: Passing `usize::MAX` (`-1`) for both minimum and maximum working set sizes
+        // to `SetProcessWorkingSetSizeEx` on `GetCurrentProcess()` is the documented Win32 API
+        // to cooperatively trim idle pages from the current process working set.
+        unsafe {
+            let _ = SetProcessWorkingSetSizeEx(
+                GetCurrentProcess(),
+                usize::MAX,
+                usize::MAX,
+                SETPROCESSWORKINGSETSIZEEX_FLAGS(0),
+            );
+        }
     }
 
     pub fn begin_window_resize(edge: WindowResizeEdge) {

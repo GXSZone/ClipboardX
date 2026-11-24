@@ -18,6 +18,7 @@ use clipboardx_platform::{
     own_window_visual_origin, own_window_visual_rect, place_own_window_at_capsule_anchor,
     position_hover_preview_popup, remember_own_window_hwnd, reset_hover_preview_popup_hwnd,
     resize_own_window_clamped, set_own_window_topmost, snap_or_read_capsule_anchor,
+    trim_process_working_set,
 };
 #[cfg(target_os = "windows")]
 use clipboardx_platform::{
@@ -25,7 +26,7 @@ use clipboardx_platform::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, CursorStyle, Entity,
+    AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, CursorStyle, Entity, Image,
     MouseButton, Render, ResizeEdge, Task, Window, WindowBackgroundAppearance, WindowBounds,
     WindowKind, WindowOptions, div, point, px, size,
 };
@@ -213,7 +214,7 @@ pub struct AppWorkspaceView {
     hover_left_at: Option<Instant>,
     suppress_hover_until_leave: bool,
     history: Entity<HistoryPanel>,
-    settings: Entity<SettingsView>,
+    settings: Option<Entity<SettingsView>>,
     drag: BlindDragTracker,
 
     window_geom_task: Option<Task<()>>,
@@ -246,25 +247,12 @@ impl AppWorkspaceView {
         let rendered_palette = ThemePalette::from_theme_id(active_theme_id);
         sync_component_theme(&rendered_palette, Some(window), cx);
 
-        let weak_close = cx.weak_entity();
         let history_rt = Rc::clone(&runtime);
         let action_for_panel = Rc::clone(&on_action);
         let history = cx.new(|cx| {
             HistoryPanel::new(
                 history_rt,
                 Rc::new(move |req| action_for_panel(ShellAction::Panel(req))),
-                window,
-                cx,
-            )
-        });
-
-        let settings_rt = Rc::clone(&runtime);
-        let settings = cx.new(|cx| {
-            SettingsView::new(
-                settings_rt,
-                Rc::new(move |win, app| {
-                    let _ = weak_close.update(app, |ws, cx| ws.exit_settings(win, cx));
-                }),
                 window,
                 cx,
             )
@@ -290,7 +278,7 @@ impl AppWorkspaceView {
             hover_left_at: None,
             suppress_hover_until_leave: false,
             history,
-            settings,
+            settings: None,
             drag: BlindDragTracker::default(),
             window_geom_task: None,
             pending_stage_transition: false,
@@ -404,8 +392,9 @@ impl AppWorkspaceView {
             self.rendered_palette = current.clone();
             self.history
                 .update(cx, |h, cx| h.set_animated_palette(current.clone(), cx));
-            self.settings
-                .update(cx, |s, cx| s.set_animated_palette(current, cx));
+            if let Some(settings) = &self.settings {
+                settings.update(cx, |s, cx| s.set_animated_palette(current, cx));
+            }
             if raw_t >= 1.0 {
                 self.theme_transition = None;
             }
@@ -540,6 +529,9 @@ impl AppWorkspaceView {
             && tr.raw_progress(now) >= 1.0
         {
             self.page_transition = None;
+            if !tr.to_settings && self.page == ActivePage::History {
+                self.settings = None;
+            }
         }
 
         if self.has_active_animations() {
@@ -754,6 +746,30 @@ impl AppWorkspaceView {
         raw_h.max(LayoutSpec::WINDOW_HEIGHT)
     }
 
+    fn ensure_settings_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Entity<SettingsView> {
+        if let Some(existing) = &self.settings {
+            return existing.clone();
+        }
+        let weak_close = cx.weak_entity();
+        let settings_rt = Rc::clone(&self.runtime);
+        let created = cx.new(|cx| {
+            SettingsView::new(
+                settings_rt,
+                Rc::new(move |win, app| {
+                    let _ = weak_close.update(app, |ws, cx| ws.exit_settings(win, cx));
+                }),
+                window,
+                cx,
+            )
+        });
+        self.settings = Some(created.clone());
+        created
+    }
+
     pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.page == ActivePage::Settings {
             return;
@@ -769,7 +785,8 @@ impl AppWorkspaceView {
         let cur_h = self.current_visual_height(window);
         let cur_visual_w = f32::from(window.viewport_size().width) - WINDOW_SHADOW_MARGIN * 2.0;
         let rendered_palette = self.rendered_palette.clone();
-        self.settings.update(cx, |s, cx| {
+        let settings_view = self.ensure_settings_view(window, cx);
+        settings_view.update(cx, |s, cx| {
             s.refresh_active_tab_metrics();
             s.set_animated_palette(rendered_palette, cx);
             s.focus_self(window, cx);
@@ -957,6 +974,24 @@ impl AppWorkspaceView {
         });
         self.schedule_animation_frame(window, cx);
         cx.notify();
+    }
+
+    /// Returns `true` when resting peacefully in mini-capsule standby with no active animations.
+    pub fn is_quiet_capsule_idle(&self) -> bool {
+        self.stage == FloatingStage::MiniCapsuleIdle
+            && !self.is_pointer_over
+            && self.shell_morph.is_none()
+            && self.capsule_hover_pop_start.is_none()
+            && self.capsule_pulse_start.is_none()
+            && self.page_transition.is_none()
+    }
+
+    /// Drops transient preview caches and lazy views held while resting in capsule/tray standby.
+    pub fn reclaim_idle_caches(&mut self, cx: &mut Context<'_, Self>) -> Option<Arc<Image>> {
+        if self.page == ActivePage::History {
+            self.settings = None;
+        }
+        self.history.update(cx, |h, _| h.reclaim_idle_caches())
     }
 
     /// Expands cleanly from the `38x58` mini-capsule directly into the full slim (`328x420`)
@@ -1197,9 +1232,11 @@ impl AppWorkspaceView {
             self.history.update(cx, |view, cx| {
                 view.refresh_locale_placeholders(window, cx);
             });
-            self.settings.update(cx, |view, cx| {
-                view.refresh_locale_placeholders(window, cx);
-            });
+            if let Some(settings) = &self.settings {
+                settings.update(cx, |view, cx| {
+                    view.refresh_locale_placeholders(window, cx);
+                });
+            }
         }
 
         if history_changed {
@@ -1209,18 +1246,22 @@ impl AppWorkspaceView {
                 self.schedule_animation_frame(window, cx);
             } else if self.page == ActivePage::Settings {
                 self.history_snapshot_dirty = true;
-                self.settings.update(cx, |view, cx| {
-                    view.refresh_active_tab_metrics();
-                    cx.notify();
-                });
+                if let Some(settings) = &self.settings {
+                    settings.update(cx, |view, cx| {
+                        view.refresh_active_tab_metrics();
+                        cx.notify();
+                    });
+                }
             } else {
                 self.history_snapshot_dirty = false;
                 self.history.update(cx, |view, cx| {
                     view.refresh_items(cx);
                 });
             }
-        } else if self.page == ActivePage::Settings {
-            self.settings.update(cx, |_, cx| cx.notify());
+        } else if self.page == ActivePage::Settings
+            && let Some(settings) = &self.settings
+        {
+            settings.update(cx, |_, cx| cx.notify());
         }
         cx.notify();
     }
@@ -1311,7 +1352,10 @@ impl Render for AppWorkspaceView {
             FloatingStage::FullPanel => {
                 let base_content = match self.page {
                     ActivePage::History => self.history.clone().into_any_element(),
-                    ActivePage::Settings => self.settings.clone().into_any_element(),
+                    ActivePage::Settings => self.settings.clone().map_or_else(
+                        || self.history.clone().into_any_element(),
+                        |s| s.into_any_element(),
+                    ),
                 };
                 let content_with_morph = if let Some((m, _)) = morph_sample {
                     div()
@@ -1592,6 +1636,9 @@ pub struct ShellController {
     blur_started_at: Option<Instant>,
     suppress_focus_expand_until: Option<Instant>,
     suppress_blur_until: Option<Instant>,
+    quiet_idle_since: Option<Instant>,
+    idle_reclaimed: bool,
+    startup_trim_at: Option<Instant>,
 }
 
 impl ShellController {
@@ -1615,10 +1662,13 @@ impl ShellController {
             blur_started_at: None,
             suppress_focus_expand_until: None,
             suppress_blur_until: Some(Instant::now() + Duration::from_millis(400)),
+            quiet_idle_since: None,
+            idle_reclaimed: false,
+            startup_trim_at: Some(Instant::now() + Duration::from_millis(450)),
         }));
 
         // Zero-latency microtask dispatcher: wakes immediately on UI hover/tab/click actions
-        // without waiting for the 16ms background OS polling loop or risking RefCell re-entrancy.
+        // without waiting for the background OS polling loop or risking RefCell re-entrancy.
         let async_app = cx.to_async();
         let wake_ctrl = Rc::clone(&controller);
         let wake_pending = Rc::new(Cell::new(false));
@@ -1644,9 +1694,8 @@ impl ShellController {
         let pump_ctrl = Rc::clone(&controller);
         cx.spawn(async move |cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
+                let interval = cx.update(|cx| pump_ctrl.borrow().recommended_poll_interval(cx));
+                cx.background_executor().timer(interval).await;
 
                 cx.update(|cx| {
                     pump_ctrl.borrow_mut().tick(cx);
@@ -1654,6 +1703,33 @@ impl ShellController {
             }
         })
         .detach();
+    }
+
+    fn is_quiet_standby(&self, cx: &App) -> bool {
+        if self.tray_menu_window.is_some() || self.hover_preview_visible || is_blind_dragging() {
+            return false;
+        }
+        let needs_hotkey_poll = self
+            .runtime
+            .trigger_sm
+            .lock()
+            .map(|sm| sm.needs_modifier_polling())
+            .unwrap_or(false);
+        if needs_hotkey_poll {
+            return false;
+        }
+        match &self.active_window {
+            None => true,
+            Some((_, view)) => view.read(cx).is_quiet_capsule_idle(),
+        }
+    }
+
+    fn recommended_poll_interval(&self, cx: &App) -> Duration {
+        if self.is_quiet_standby(cx) {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_millis(16)
+        }
     }
 
     fn close_tray_menu(&mut self, cx: &mut App) {
@@ -1927,6 +2003,8 @@ impl ShellController {
     }
 
     fn ensure_window(&mut self, open_settings_immediately: bool, cx: &mut App) {
+        self.quiet_idle_since = None;
+        self.idle_reclaimed = false;
         self.close_hover_preview(cx);
         self.close_tray_menu(cx);
         self.suppress_blur_until = Some(Instant::now() + Duration::from_millis(380));
@@ -2046,7 +2124,7 @@ impl ShellController {
     }
 
     fn hide_panel(&mut self, cx: &mut App) {
-        self.close_hover_preview(cx);
+        self.destroy_hover_preview(cx);
         if let Some((handle, _)) = self.active_window.take() {
             let _ = handle.update(cx, |_, window, _cx| {
                 window.remove_window();
@@ -2057,10 +2135,12 @@ impl ShellController {
         if let Ok(mut sm) = self.runtime.trigger_sm.lock() {
             sm.mark_hidden();
         }
+        self.quiet_idle_since = None;
+        self.idle_reclaimed = false;
     }
 
     fn enter_standby_for_config(&mut self, cx: &mut App) {
-        self.close_hover_preview(cx);
+        self.destroy_hover_preview(cx);
         if let Ok(mut sm) = self.runtime.trigger_sm.lock() {
             sm.mark_hidden();
         }
@@ -2073,11 +2153,40 @@ impl ShellController {
                         view.update(cx, |ws, cx| ws.enter_mini_capsule_idle(window, cx));
                     });
                 }
+                self.quiet_idle_since = None;
+                self.idle_reclaimed = false;
             }
             WindowBlurBehavior::AutoHide => {
                 self.hide_panel(cx);
             }
         }
+    }
+
+    /// Reclaims transient preview caches, decoded thumbnail textures, SQLite page buffers,
+    /// and idle OS working-set pages once the window settles into capsule or tray standby.
+    fn perform_idle_memory_reclaim(&mut self, cx: &mut App) {
+        let can_reclaim = match &self.active_window {
+            None => true,
+            Some((_, view)) => view.read(cx).is_quiet_capsule_idle(),
+        };
+        if !can_reclaim {
+            return;
+        }
+        self.destroy_hover_preview(cx);
+
+        let mut images = self.runtime.drain_image_cache();
+        if let Some((handle, view)) = &self.active_window {
+            let view = view.clone();
+            let _ = handle.update(cx, |_, _, cx| {
+                if let Some(extra) = view.update(cx, |ws, cx| ws.reclaim_idle_caches(cx)) {
+                    images.push(extra);
+                }
+            });
+        }
+        drop(images);
+
+        self.runtime.reclaim_storage_memory();
+        trim_process_working_set();
     }
 
     fn handle_after_paste(&mut self, cx: &mut App) {
@@ -2499,6 +2608,34 @@ impl ShellController {
                     self.active_window = None;
                 }
             }
+            if history_changed {
+                self.quiet_idle_since = None;
+                self.idle_reclaimed = false;
+            }
+        }
+
+        let now = Instant::now();
+        if let Some(trim_due) = self.startup_trim_at
+            && now >= trim_due
+        {
+            self.startup_trim_at = None;
+            self.runtime.reclaim_storage_memory();
+            trim_process_working_set();
+        }
+
+        // Unified state-machine idle memory reclamation: catches EVERY return to quiet capsule
+        // or tray standby (blur, hover-collapse, Esc, after-paste, or background copy pulse).
+        if self.is_quiet_standby(cx) {
+            if !self.idle_reclaimed {
+                let since = *self.quiet_idle_since.get_or_insert(now);
+                if now.duration_since(since) >= Duration::from_millis(600) {
+                    self.idle_reclaimed = true;
+                    self.perform_idle_memory_reclaim(cx);
+                }
+            }
+        } else {
+            self.quiet_idle_since = None;
+            self.idle_reclaimed = false;
         }
     }
 }

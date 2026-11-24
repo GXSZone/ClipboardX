@@ -2119,10 +2119,9 @@ impl SettingsView {
                                     .flex_1()
                                     .min_w_0()
                                     .text_size(px(11.0))
-                                    .line_height(px(14.0))
+                                    .line_height(px(15.0))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(dot_fg)
-                                    .truncate()
                                     .child(banner_text),
                             ),
                     )

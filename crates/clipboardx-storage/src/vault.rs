@@ -90,6 +90,15 @@ impl VaultStore {
         }
     }
 
+    /// Releases non-essential SQLite page cache memory when an unlocked session is idle.
+    pub fn shrink_memory(&self) {
+        if let Ok(guard) = self.session.lock()
+            && let Some(sess) = guard.as_ref()
+        {
+            let _ = sess.conn.execute_batch("PRAGMA shrink_memory;");
+        }
+    }
+
     /// Initializes or unlocks `vault.db` silently using the OS keyring trusted DEK cache.
     pub fn init_or_unlock_trusted(
         &self,
@@ -483,7 +492,7 @@ impl VaultStore {
             .map_err(|err| StorageError::Database(format!("open vault.db failed: {err}")))?;
         let dek_hex = Zeroizing::new(hex::encode(*dek));
         let pragma_sql = Zeroizing::new(format!(
-            "PRAGMA cipher = 'chacha20'; PRAGMA key = \"x'{}'\"; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;",
+            "PRAGMA cipher = 'chacha20'; PRAGMA key = \"x'{}'\"; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA cache_size = -512; PRAGMA temp_store = FILE;",
             *dek_hex
         ));
         conn.execute_batch(&pragma_sql).map_err(|err| {

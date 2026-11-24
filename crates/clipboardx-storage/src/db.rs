@@ -50,7 +50,7 @@ impl HistoryStore {
             .map_err(|err| StorageError::Database(format!("open sqlite failed: {err}")))?;
 
         let pragma_sql = format!(
-            "PRAGMA cipher = 'chacha20'; PRAGMA key = \"x'{db_key_hex}'\"; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;"
+            "PRAGMA cipher = 'chacha20'; PRAGMA key = \"x'{db_key_hex}'\"; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -1024; PRAGMA temp_store = FILE;"
         );
         conn.execute_batch(&pragma_sql).map_err(|err| {
             StorageError::Crypto(format!("unlock encrypted history.db failed: {err}"))
@@ -71,6 +71,13 @@ impl HistoryStore {
 
     pub fn blobs(&self) -> &BlobStore {
         &self.blobs
+    }
+
+    /// Asks SQLite to release non-essential page cache memory during idle standby.
+    pub fn shrink_memory(&self) {
+        if let Ok(conn) = self.lock_conn() {
+            let _ = conn.execute_batch("PRAGMA shrink_memory;");
+        }
     }
 
     /// Inserts a new item or bumps an existing duplicate (`content_hash`) to the top,

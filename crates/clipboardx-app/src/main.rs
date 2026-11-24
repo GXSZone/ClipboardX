@@ -12,7 +12,10 @@ mod state;
 mod theme;
 mod vault;
 
+use std::io::{Read, Write};
+
 use clipboardx_core::AppPaths;
+use clipboardx_ocr::native_provider;
 use gpui_kit::QuitMode;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
@@ -37,7 +40,25 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     Some(guard)
 }
 
+fn run_native_ocr_worker_and_exit() -> ! {
+    let mut png_bytes = Vec::new();
+    let exit_code = if std::io::stdin().read_to_end(&mut png_bytes).is_ok()
+        && let Ok(output) = native_provider().recognize_png(&png_bytes, None)
+    {
+        let _ = std::io::stdout().write_all(output.full_text.as_bytes());
+        let _ = std::io::stdout().flush();
+        0
+    } else {
+        1
+    };
+    std::process::exit(exit_code);
+}
+
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--native-ocr-worker")) {
+        run_native_ocr_worker_and_exit();
+    }
+
     let _log_guard = init_logging();
 
     let runtime = match AppRuntime::bootstrap() {

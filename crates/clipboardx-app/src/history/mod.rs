@@ -39,7 +39,7 @@ use crate::vault::{
     VaultUiState, render_vault_list_row, render_vault_right_pane,
 };
 
-const WARM_THUMB_BATCH: usize = 16;
+const WARM_THUMB_BATCH: usize = 2;
 const TAB_HOVER_DWELL_MS: u64 = 55;
 const DUAL_LEFT_LIST_WIDTH: f32 = 256.0;
 
@@ -319,10 +319,11 @@ impl HistoryPanel {
                     combined.push(RowEntry::Vault(entry));
                 }
             }
+            let fetch_limit = if query.trim().is_empty() { 60 } else { 120 };
             let clip_hits = self
                 .runtime
                 .service
-                .query_summaries(tab, group, &query, 300)
+                .query_summaries(tab, group, &query, fetch_limit)
                 .unwrap_or_default();
             for clip in clip_hits {
                 combined.push(RowEntry::Clip(clip));
@@ -370,7 +371,7 @@ impl HistoryPanel {
         let mut loaded_thumbs = 0usize;
         let mut loaded_previews = 0usize;
         for row in self.rows.iter() {
-            if loaded_thumbs >= WARM_THUMB_BATCH && loaded_previews >= 10 {
+            if loaded_thumbs >= WARM_THUMB_BATCH && loaded_previews >= 2 {
                 break;
             }
             let RowEntry::Clip(summary) = row else {
@@ -380,7 +381,7 @@ impl HistoryPanel {
                 loaded_thumbs += 1;
                 let _ = self.runtime.warm_image_thumb_from_summary(summary);
             }
-            if loaded_previews < 10 {
+            if loaded_previews < 2 {
                 loaded_previews += 1;
                 let valid_cached = self.item_cache.get(&summary.id).is_some_and(|(it, _)| {
                     it.summary.updated_at_ms == summary.updated_at_ms
@@ -391,7 +392,7 @@ impl HistoryPanel {
                 });
                 if !valid_cached && let Ok(item) = self.runtime.service.get_item(summary.id) {
                     let prep = PreparedPreview::from_item(&item);
-                    if self.item_cache.len() >= 128 {
+                    if self.item_cache.len() >= 16 {
                         self.item_cache.clear();
                     }
                     self.item_cache.insert(summary.id, (item, prep));
@@ -404,6 +405,16 @@ impl HistoryPanel {
     pub fn set_animated_palette(&mut self, palette: ThemePalette, cx: &mut Context<'_, Self>) {
         self.palette = palette;
         cx.notify();
+    }
+
+    /// Releases cached preview items and decoded image handles while resting in capsule/tray standby.
+    pub fn reclaim_idle_caches(&mut self) -> Option<Arc<Image>> {
+        self.item_cache.clear();
+        self.item_cache.shrink_to_fit();
+        self.prepared_preview = None;
+        self.selected_item = None;
+        self.selected_vault = None;
+        self.cached_image.take().map(|(_, img)| img)
     }
 
     /// Updates localized input placeholders after settings/locale changes without disrupting theme fades.
@@ -506,7 +517,7 @@ impl HistoryPanel {
                 } else {
                     self.runtime.service.get_item(id).ok().map(|item| {
                         let prep = PreparedPreview::from_item(&item);
-                        if self.item_cache.len() >= 128 {
+                        if self.item_cache.len() >= 16 {
                             self.item_cache.clear();
                         }
                         self.item_cache.insert(id, (item.clone(), prep.clone()));

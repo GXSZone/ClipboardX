@@ -40,6 +40,10 @@ impl VaultService {
         self.store.lock();
     }
 
+    pub fn shrink_memory(&self) {
+        self.store.shrink_memory();
+    }
+
     /// Attempts silent unlock when policy is `TrustedDeviceNoPrompt`.
     /// Returns `Ok(true)` if unlocked or newly initialized silently, `Ok(false)` if a passphrase is required.
     pub fn try_unlock_trusted(&self, policy: VaultUnlockPolicy) -> Result<bool, ClipboardXError> {

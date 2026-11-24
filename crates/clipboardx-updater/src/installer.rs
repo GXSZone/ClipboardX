@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clipboardx_model::{UpdateReleaseInfo, UpdaterError};
-use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
+use crate::http::send_get_with_fallback;
 use crate::manifest::{canonical_asset_signing_bytes, verify_ed25519_hex};
 
 /// Downloads a release artifact over HTTPS, verifies SHA-256 and Ed25519 signature,
@@ -39,18 +39,12 @@ pub fn download_and_verify_release(
     let part_path = staging_dir.join(format!("release-{}.part", sanitize_tag(&info.version)));
     let _ = fs::remove_file(&part_path);
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(120))
-        .user_agent("ClipboardX-Updater")
-        .build()
-        .map_err(|err| UpdaterError::Network(err.to_string()))?;
-
-    let mut response = client
-        .get(&info.download_url)
-        .send()
-        .map_err(|err| UpdaterError::Network(err.to_string()))?
-        .error_for_status()
-        .map_err(|err| UpdaterError::Network(err.to_string()))?;
+    let mut response = send_get_with_fallback(
+        Duration::from_secs(120),
+        "ClipboardX-Updater",
+        &info.download_url,
+        None,
+    )?;
 
     let mut out = File::create(&part_path).map_err(|err| UpdaterError::Install(err.to_string()))?;
     let mut buf = [0u8; 16 * 1024];
@@ -223,8 +217,12 @@ fn extract_binary_from_zip(
     let mut archive =
         ZipArchive::new(file).map_err(|err| UpdaterError::Install(err.to_string()))?;
 
+    let target_lower = executable_name.to_ascii_lowercase();
+    let mut fallback_idx: Option<usize> = None;
+    let mut selected_idx: Option<usize> = None;
+
     for idx in 0..archive.len() {
-        let mut entry = archive
+        let entry = archive
             .by_index(idx)
             .map_err(|err| UpdaterError::Install(err.to_string()))?;
         if entry.is_dir() {
@@ -233,14 +231,29 @@ fn extract_binary_from_zip(
         let Some(safe_path) = entry.enclosed_name() else {
             continue;
         };
-        let matches = safe_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .is_some_and(|name| name == executable_name);
-        if !matches {
+        let Some(name) = safe_path.file_name().and_then(|s| s.to_str()) else {
             continue;
-        }
+        };
 
+        if name == executable_name {
+            selected_idx = Some(idx);
+            break;
+        }
+        if fallback_idx.is_none()
+            && (name.eq_ignore_ascii_case(&target_lower)
+                || name.eq_ignore_ascii_case("ClipboardX.exe")
+                || name.eq_ignore_ascii_case("clipboardx-app.exe")
+                || name == "ClipboardX"
+                || name == "clipboardx-app")
+        {
+            fallback_idx = Some(idx);
+        }
+    }
+
+    if let Some(idx) = selected_idx.or(fallback_idx) {
+        let mut entry = archive
+            .by_index(idx)
+            .map_err(|err| UpdaterError::Install(err.to_string()))?;
         let mut out =
             File::create(dest_path).map_err(|err| UpdaterError::Install(err.to_string()))?;
         std::io::copy(&mut entry, &mut out)

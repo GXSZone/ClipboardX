@@ -10,7 +10,7 @@ pub const RELEASE_MANIFEST_ASSET_NAME: &str = "clipboardx-manifest.json";
 /// Official ClipboardX Ed25519 release verifying key (32-byte hex).
 /// Override via `GitHubUpdateClient::with_public_key_hex` in custom forks or tests.
 pub const DEFAULT_RELEASE_PUBLIC_KEY_HEX: &str =
-    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    "ecc85dfdfcafe953e81df29f703af4a11143afeaefbc3a88b19664188bfb7079";
 
 /// Platform-specific binary artifact metadata inside a signed release manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
